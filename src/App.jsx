@@ -1,50 +1,40 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState } from 'react';
+import ConnectionBar from './components/ConnectionBar';
+import DatabaseTab from './components/DatabaseTab';
+import AppTab from './components/AppTab';
 
 function App() {
-  const [name, setName] = useState("");
-  const [greeting, setGreeting] = useState("");
-
-  async function handleGreet() {
-    try {
-      const response = await invoke("greet", { name: name || "World" });
-      setGreeting(response);
-    } catch (error) {
-      console.error(error);
-      setGreeting("خطا در فراخوانی بک‌اند: " + error);
-    }
-  }
+  const [activeTab, setActiveTab] = useState('Database');
+  const [selectedConnection, setSelectedConnection] = useState(null);
 
   return (
-    <main style={{ padding: "2rem", fontFamily: "sans-serif" }}>
-      <h1>Chameleon Editor</h1>
-      <p>پروژهٔ اولیهٔ Tauri + React (JavaScript)</p>
-
-      <div style={{ marginTop: "1.5rem", maxWidth: "400px" }}>
-        <label style={{ display: "block", marginBottom: "0.5rem" }}>
-          نام خود را وارد کنید:
-        </label>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="مثلاً: علی"
-          style={{ width: "100%", padding: "0.5rem", marginBottom: "1rem" }}
-        />
-        <button
-          onClick={handleGreet}
-          style={{ padding: "0.5rem 1rem", cursor: "pointer" }}
-        >
-          نمایش Hello World از Rust
-        </button>
-
-        {greeting && (
-          <p style={{ marginTop: "1rem", color: "green", fontWeight: "bold" }}>
-            {greeting}
-          </p>
-        )}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'sans-serif' }}>
+      <ConnectionBar
+        selected={selectedConnection}
+        onSelect={setSelectedConnection}
+      />
+      <div style={{ display: 'flex', borderBottom: '1px solid #ccc' }}>
+        {['Database', 'App'].map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            style={{
+              padding: '8px 16px',
+              background: activeTab === tab ? '#e0e0e0' : 'transparent',
+              border: 'none',
+              borderBottom: activeTab === tab ? '2px solid #0078d4' : '2px solid transparent',
+              cursor: 'pointer'
+            }}
+          >
+            {tab}
+          </button>
+        ))}
       </div>
-    </main>
+      <div style={{ flex: 1, overflow: 'hidden' }}>
+        {activeTab === 'Database' && <DatabaseTab connection={selectedConnection} />}
+        {activeTab === 'App' && <AppTab />}
+      </div>
+    </div>
   );
 }
 
