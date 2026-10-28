@@ -23,6 +23,10 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.12.5", features = [] }
 tauri-plugin-log = "2"
-tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls"] }
+tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls", "chrono", "winauth"] }
 tokio = { version = "1", features = ["net", "rt"] }
 tokio-util = { version = "0.7", features = ["compat"] }
+futures-util = "0.3"
+chrono = { version = "0.4", features = ["alloc"] }
+bb8 = "0.8"
+bb8-tiberius = "0.16"
