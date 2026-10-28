@@ -65,8 +65,10 @@ pub async fn get_sql_objects(req: GetObjectsRequest) -> Result<Vec<String>, Stri
         }
         "Functions" => {
             "SELECT s.name + '.' + o.name FROM sys.objects o \
-             JOIN sys.schemas s ON o.schema_id = s.schema_id \
-             WHERE o.type IN ('FN','IF','TF','FS','FT') ORDER BY s.name, o.name"
+     JOIN sys.schemas s ON o.schema_id = s.schema_id \
+     WHERE o.type IN ('FN','IF','TF') \
+       AND o.is_ms_shipped = 0 \
+     ORDER BY s.name, o.name"
         }
         "Views" => {
             "SELECT s.name + '.' + v.name FROM sys.views v \
@@ -378,6 +380,69 @@ pub async fn get_procedure_definition(
 
 #[tauri::command]
 pub async fn save_procedure(pool_state: State<'_, SqlPool>, sql: String) -> Result<(), String> {
+    let mut client = pool_state
+        .0
+        .get()
+        .await
+        .map_err(|e| format!("Pool get failed: {e}"))?;
+    client
+        .simple_query(&sql)
+        .await
+        .map_err(|e| format!("Save failed: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_function_definition(
+    pool_state: State<'_, SqlPool>,
+    schema: String,
+    name: String,
+) -> Result<String, String> {
+    let mut client = pool_state
+        .0
+        .get()
+        .await
+        .map_err(|e| format!("Pool get failed: {e}"))?;
+    let full_name = format!(
+        "[{}].[{}]",
+        schema.replace(']', "]]"),
+        name.replace(']', "]]")
+    );
+    let query = format!(
+        "SELECT OBJECT_DEFINITION(OBJECT_ID('{}'))",
+        full_name.replace('\'', "''")
+    );
+    let stream = client
+        .simple_query(&query)
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+    let rows = stream
+        .into_first_result()
+        .await
+        .map_err(|e| format!("Read failed: {e}"))?;
+    let def = rows
+        .first()
+        .and_then(|r| r.get::<&str, _>(0))
+        .unwrap_or("")
+        .to_string();
+    // جایگزینی CREATE FUNCTION با CREATE OR ALTER FUNCTION
+    let upper = def.to_uppercase();
+    let recreated = if let Some(pos) = upper.find("CREATE") {
+        let after = &def[pos + 6..];
+        let after_upper = after.to_uppercase();
+        if after_upper.trim_start().starts_with("FUNCTION") {
+            format!("CREATE OR ALTER{}", after)
+        } else {
+            def.clone()
+        }
+    } else {
+        def.clone()
+    };
+    Ok(recreated)
+}
+
+#[tauri::command]
+pub async fn save_function(pool_state: State<'_, SqlPool>, sql: String) -> Result<(), String> {
     let mut client = pool_state
         .0
         .get()

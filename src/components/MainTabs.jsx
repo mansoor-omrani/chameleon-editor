@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import TablesTab from './TablesTab';
 import ProceduresTab from './ProceduresTab';
+import FunctionsTab from './FunctionsTab';
 
 const TABS = ['Tables', 'Procedures', 'Functions', 'Views'];
 
@@ -33,7 +34,8 @@ export default function MainTabs({ connection }) {
                 )}
                 {connection && active === 'Tables' && <TablesTab connection={connection} />}
                 {connection && active === 'Procedures' && <ProceduresTab connection={connection} />}
-                {connection && active !== 'Tables' && active !== 'Procedures' && (
+                {connection && active === 'Functions' && <FunctionsTab connection={connection} />}
+                {connection && active !== 'Tables' && active !== 'Procedures' && active !== 'Functions' && (
                     <p style={{ padding: '16px', color: '#888' }}>
                         محتوای تب <strong>{active}</strong> بعداً پیاده‌سازی می‌شود.
                     </p>
