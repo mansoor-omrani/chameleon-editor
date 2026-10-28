@@ -324,3 +324,68 @@ fn column_data_to_string(data: tiberius::ColumnData) -> Option<String> {
         }),
     }
 }
+
+#[tauri::command]
+pub async fn get_procedure_definition(
+    pool_state: State<'_, SqlPool>,
+    schema: String,
+    name: String,
+) -> Result<String, String> {
+    let mut client = pool_state
+        .0
+        .get()
+        .await
+        .map_err(|e| format!("Pool get failed: {e}"))?;
+    let full_name = format!(
+        "[{}].[{}]",
+        schema.replace(']', "]]"),
+        name.replace(']', "]]")
+    );
+    let query = format!(
+        "SELECT OBJECT_DEFINITION(OBJECT_ID('{}'))",
+        full_name.replace('\'', "''")
+    );
+    let stream = client
+        .simple_query(&query)
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+    let rows = stream
+        .into_first_result()
+        .await
+        .map_err(|e| format!("Read failed: {e}"))?;
+    let def = rows
+        .first()
+        .and_then(|r| r.get::<&str, _>(0))
+        .unwrap_or("")
+        .to_string();
+    // جایگزینی CREATE PROCEDURE با CREATE OR ALTER PROCEDURE
+    let upper = def.to_uppercase();
+    let recreated = if let Some(pos) = upper.find("CREATE") {
+        let after = &def[pos + 6..];
+        let after_upper = after.to_uppercase();
+        if after_upper.trim_start().starts_with("PROCEDURE")
+            || after_upper.trim_start().starts_with("PROC")
+        {
+            format!("CREATE OR ALTER{}", after)
+        } else {
+            def.clone()
+        }
+    } else {
+        def.clone()
+    };
+    Ok(recreated)
+}
+
+#[tauri::command]
+pub async fn save_procedure(pool_state: State<'_, SqlPool>, sql: String) -> Result<(), String> {
+    let mut client = pool_state
+        .0
+        .get()
+        .await
+        .map_err(|e| format!("Pool get failed: {e}"))?;
+    client
+        .simple_query(&sql)
+        .await
+        .map_err(|e| format!("Save failed: {e}"))?;
+    Ok(())
+}

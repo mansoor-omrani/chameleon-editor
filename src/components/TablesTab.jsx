@@ -126,8 +126,8 @@ export default function TablesTab({ connection }) {
 
     return (
         <div ref={containerRef} style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-            <div style={{ width: `${listWidth}px`, minWidth: '120px', borderRight: '1px solid #ccc', overflow: 'auto', padding: '4px' }}>
-                {loadingTables && <p style={{ padding: '8px', color: '#888' }}>Loading...</p>}
+            <div className="list-panel" style={{ width: `${listWidth}px`, minWidth: '120px' }}>
+                {loadingTables && <p style={{ padding: '8px', color: '#888', fontSize: '12px' }}>Loading...</p>}
                 {!loadingTables && tables.length === 0 && (
                     <p style={{ padding: '8px', color: '#888', fontSize: '12px' }}>جدولی یافت نشد.</p>
                 )}
@@ -135,25 +135,14 @@ export default function TablesTab({ connection }) {
                     <div
                         key={t}
                         onClick={() => setSelectedTable(t)}
-                        style={{
-                            padding: '3px 7px',
-                            cursor: 'pointer',
-                            borderRadius: '4px',
-                            fontSize: '13px',
-                            lineHeight: '1.4',
-                            background: selectedTable === t ? '#e0f0ff' : 'transparent'
-                        }}
+                        className={`list-item${selectedTable === t ? ' active' : ''}`}
                     >
                         {t}
                     </div>
                 ))}
             </div>
 
-            <div
-                onMouseDown={onMouseDown}
-                style={{ width: '5px', cursor: 'col-resize', background: '#e0e0e0', flexShrink: 0 }}
-                title="Drag to resize"
-            />
+            <div className="splitter" onMouseDown={onMouseDown} title="Drag to resize" />
 
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                 {error && (

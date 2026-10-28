@@ -64,7 +64,9 @@ pub fn run() {
             commands::save_connections,
             commands::update_connection,
             commands::get_table_columns,
-            commands::get_table_data
+            commands::get_table_data,
+            commands::get_procedure_definition,
+            commands::save_procedure,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
