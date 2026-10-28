@@ -51,7 +51,10 @@ export default function TablesTab({ connection }) {
             setColumns(columnsCache.current.get(key));
             return;
         }
-        const cols = await invoke('get_table_columns', { config: connection, schema, table });
+        const cols = await invoke('get_table_columns', { schema, table });
+        if (!Array.isArray(cols)) {
+            throw new Error('Invalid columns response: ' + JSON.stringify(cols));
+        }
         columnsCache.current.set(key, cols);
         setColumns(cols);
     }
@@ -67,10 +70,14 @@ export default function TablesTab({ connection }) {
         setError(null);
         Promise.all([
             loadColumns(schema, table, false),
-            invoke('get_table_data', { config: connection, schema, table, limit: 100 })
+            invoke('get_table_data', { schema, table, limit: 100 })
         ])
             .then(([, d]) => setData(d))
-            .catch(err => setError(String(err)))
+            .catch(err => {
+                setError(String(err));
+                setColumns([]);
+                setData(null);
+            })
             .finally(() => setLoadingDetails(false));
     }, [connection, selectedTable]);
 
@@ -129,7 +136,11 @@ export default function TablesTab({ connection }) {
                         key={t}
                         onClick={() => setSelectedTable(t)}
                         style={{
-                            padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
+                            padding: '3px 7px',
+                            cursor: 'pointer',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            lineHeight: '1.4',
                             background: selectedTable === t ? '#e0f0ff' : 'transparent'
                         }}
                     >

@@ -31,6 +31,13 @@ function App() {
     );
   }, [connections, loaded]);
 
+  useEffect(() => {
+    if (selectedConnection) {
+      invoke('setup_pool', { config: selectedConnection })
+        .catch(err => console.error('Pool setup failed:', err));
+    }
+  }, [selectedConnection]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'sans-serif' }}>
       {/* Menu bar — بدون تغییر */}

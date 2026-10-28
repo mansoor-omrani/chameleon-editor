@@ -28,5 +28,5 @@ tokio = { version = "1", features = ["net", "rt"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 futures-util = "0.3"
 chrono = { version = "0.4", features = ["alloc"] }
-bb8 = "0.8"
+bb8 = "0.9"
 bb8-tiberius = "0.16"

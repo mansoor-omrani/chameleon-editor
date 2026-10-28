@@ -1,74 +1,59 @@
 // src-tauri/src/commands/sql.rs
+use crate::SqlPool;
 use crate::types::{ColumnInfo, GetObjectsRequest, SqlConnectionConfig, TableData};
+use bb8::PooledConnection;
+use bb8_tiberius::ConnectionManager;
+use tauri::State;
 use tiberius::{AuthMethod, Client, Config};
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
-#[tauri::command]
-pub async fn test_sql_connection(config: SqlConnectionConfig) -> Result<String, String> {
+fn build_config(config: &SqlConnectionConfig) -> Config {
     let mut cfg = Config::new();
     cfg.host(&config.server);
     cfg.database(&config.database);
-
     if config.integrated_security {
         cfg.authentication(AuthMethod::windows(&config.userid, &config.password));
     } else {
         cfg.authentication(AuthMethod::sql_server(&config.userid, &config.password));
     }
-
     if config.encrypt {
         cfg.encryption(tiberius::EncryptionLevel::Required);
     } else {
         cfg.encryption(tiberius::EncryptionLevel::NotSupported);
     }
-
     if config.trust_server_certificate {
         cfg.trust_cert();
     }
+    cfg
+}
 
+async fn connect(
+    config: &SqlConnectionConfig,
+) -> Result<Client<tokio_util::compat::Compat<TcpStream>>, String> {
+    let cfg = build_config(config);
     let tcp = TcpStream::connect(cfg.get_addr())
         .await
-        .map_err(|e| format!("TCP connection failed: {e}"))?;
+        .map_err(|e| format!("TCP failed: {e}"))?;
     tcp.set_nodelay(true).ok();
-
-    let mut client = Client::connect(cfg, tcp.compat_write())
+    Client::connect(cfg, tcp.compat_write())
         .await
-        .map_err(|e| format!("SQL Server connection failed: {e}"))?;
+        .map_err(|e| format!("Connect failed: {e}"))
+}
 
+#[tauri::command]
+pub async fn test_sql_connection(config: SqlConnectionConfig) -> Result<String, String> {
+    let mut client = connect(&config).await?;
     let _ = client
         .simple_query("SELECT 1")
         .await
         .map_err(|e| format!("Query failed: {e}"))?;
-
     Ok("OK".into())
 }
 
 #[tauri::command]
 pub async fn get_sql_objects(req: GetObjectsRequest) -> Result<Vec<String>, String> {
-    let mut cfg = Config::new();
-    cfg.host(&req.config.server);
-    cfg.database(&req.config.database);
-    cfg.authentication(AuthMethod::sql_server(
-        &req.config.userid,
-        &req.config.password,
-    ));
-    if req.config.encrypt {
-        cfg.encryption(tiberius::EncryptionLevel::Required);
-    } else {
-        cfg.encryption(tiberius::EncryptionLevel::NotSupported);
-    }
-    if req.config.trust_server_certificate {
-        cfg.trust_cert();
-    }
-
-    let tcp = TcpStream::connect(cfg.get_addr())
-        .await
-        .map_err(|e| format!("TCP failed: {e}"))?;
-    tcp.set_nodelay(true).ok();
-    let mut client = Client::connect(cfg, tcp.compat_write())
-        .await
-        .map_err(|e| format!("SQL connect failed: {e}"))?;
-
+    let mut client = connect(&req.config).await?;
     let query = match req.object_type.as_str() {
         "Tables" => {
             "SELECT s.name + '.' + t.name FROM sys.tables t \
@@ -115,41 +100,22 @@ pub async fn get_sql_objects(req: GetObjectsRequest) -> Result<Vec<String>, Stri
     Ok(result)
 }
 
-async fn connect(
-    config: &SqlConnectionConfig,
-) -> Result<Client<tokio_util::compat::Compat<TcpStream>>, String> {
-    let mut cfg = Config::new();
-    cfg.host(&config.server);
-    cfg.database(&config.database);
-    if config.integrated_security {
-        cfg.authentication(AuthMethod::windows(&config.userid, &config.password));
-    } else {
-        cfg.authentication(AuthMethod::sql_server(&config.userid, &config.password));
-    }
-    if config.encrypt {
-        cfg.encryption(tiberius::EncryptionLevel::Required);
-    } else {
-        cfg.encryption(tiberius::EncryptionLevel::NotSupported);
-    }
-    if config.trust_server_certificate {
-        cfg.trust_cert();
-    }
-    let tcp = TcpStream::connect(cfg.get_addr())
-        .await
-        .map_err(|e| format!("TCP failed: {e}"))?;
-    tcp.set_nodelay(true).ok();
-    Client::connect(cfg, tcp.compat_write())
-        .await
-        .map_err(|e| format!("Connect failed: {e}"))
-}
-
 #[tauri::command]
 pub async fn get_table_columns(
-    config: SqlConnectionConfig,
+    pool_state: State<'_, SqlPool>,
     schema: String,
     table: String,
 ) -> Result<Vec<ColumnInfo>, String> {
-    let mut client = connect(&config).await?;
+    let mut client = pool_state
+        .0
+        .get()
+        .await
+        .map_err(|e| format!("Pool get failed: {e}"))?;
+    let full_name = format!(
+        "[{}].[{}]",
+        schema.replace(']', "]]"),
+        table.replace(']', "]]")
+    );
     let query = format!(
         r#"
     SELECT
@@ -172,18 +138,11 @@ pub async fn get_table_columns(
     LEFT JOIN sys.computed_columns cc ON c.object_id = cc.object_id AND c.column_id = cc.column_id
     LEFT JOIN sys.extended_properties ep
         ON ep.major_id = c.object_id AND ep.minor_id = c.column_id AND ep.name = 'MS_Description'
-    WHERE c.object_id = OBJECT_ID(@P1)
+    WHERE c.object_id = OBJECT_ID('{full_name}')
     ORDER BY c.column_id
-    "#
+    "#,
+        full_name = full_name.replace('\'', "''")
     );
-
-    // تیبریوس از پارامتر پشتیبانی می‌کند، اما برای سادگی اینجا از quote امن استفاده می‌کنیم
-    let full_name = format!(
-        "[{}].[{}]",
-        schema.replace(']', "]]"),
-        table.replace(']', "]]")
-    );
-    let query = query.replace("@P1", &format!("'{}'", full_name.replace('\'', "''")));
 
     let stream = client
         .simple_query(&query)
@@ -217,12 +176,16 @@ pub async fn get_table_columns(
 
 #[tauri::command]
 pub async fn get_table_data(
-    config: SqlConnectionConfig,
+    pool_state: State<'_, SqlPool>,
     schema: String,
     table: String,
     limit: i32,
 ) -> Result<TableData, String> {
-    let mut client = connect(&config).await?;
+    let mut client = pool_state
+        .0
+        .get()
+        .await
+        .map_err(|e| format!("Pool get failed: {e}"))?;
     let full_name = format!(
         "[{}].[{}]",
         schema.replace(']', "]]"),
@@ -269,7 +232,7 @@ pub async fn get_table_data(
 
 fn column_data_to_string(data: tiberius::ColumnData) -> Option<String> {
     use tiberius::ColumnData;
-    use tiberius::time::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+    use tiberius::time::chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime, Utc};
 
     match data {
         ColumnData::U8(v) => v.map(|x| x.to_string()),
@@ -288,36 +251,32 @@ fn column_data_to_string(data: tiberius::ColumnData) -> Option<String> {
         ColumnData::Xml(v) => v.map(|x| x.to_string()),
 
         ColumnData::DateTime(v) => v.map(|dt| {
-            // dt.days() روزها از 1900-01-01
-            // dt.seconds_fragments() 1/300 ثانیه
             let days_since_1900 = dt.days() as i64;
             let secs = dt.seconds_fragments() as i64 / 300;
-            // تبدیل به ثانیه از epoch (1970-01-01): 1900-01-01 تا 1970-01-01 = 25567 روز
             let epoch_secs = (days_since_1900 - 25567) * 86400 + secs;
-            let naive = NaiveDateTime::from_timestamp_opt(epoch_secs, 0).unwrap_or_default();
+            let naive = DateTime::<Utc>::from_timestamp(epoch_secs, 0)
+                .map(|d| d.naive_utc())
+                .unwrap_or_default();
             format!("{}", naive.format("%Y-%m-%d %H:%M:%S"))
         }),
         ColumnData::SmallDateTime(v) => v.map(|dt| {
             let days_since_1900 = dt.days() as i64;
             let secs = dt.seconds_fragments() as i64 / 300;
             let epoch_secs = (days_since_1900 - 25567) * 86400 + secs;
-            let naive = NaiveDateTime::from_timestamp_opt(epoch_secs, 0).unwrap_or_default();
+            let naive = DateTime::<Utc>::from_timestamp(epoch_secs, 0)
+                .map(|d| d.naive_utc())
+                .unwrap_or_default();
             format!("{}", naive.format("%Y-%m-%d %H:%M:%S"))
         }),
         ColumnData::Date(v) => v.map(|d| {
-            // Date.days() روزها از 0001-01-01
-            // تبدیل به روز از epoch: 0001-01-01 تا 1970-01-01 = 719162 روز
-            let days_since_epoch = d.days() as i64 - 719162;
             let naive =
                 NaiveDate::from_num_days_from_ce_opt((d.days() as i32) + 1).unwrap_or_default();
             format!("{}", naive.format("%Y-%m-%d"))
         }),
         ColumnData::Time(v) => v.map(|t| {
-            // Time.increments() تعداد 10^-n ثانیه از نیمه‌شب
-            // Time.scale() مقدار n
             let scale = t.scale() as u32;
             let increments = t.increments();
-            let nanos_per_increment = 10u64.pow(9 - scale); // مثلاً scale=7 => 100ns
+            let nanos_per_increment = 10u64.pow(9 - scale);
             let total_nanos = increments * nanos_per_increment;
             let secs = (total_nanos / 1_000_000_000) as u32;
             let nanos = (total_nanos % 1_000_000_000) as u32;
@@ -336,7 +295,9 @@ fn column_data_to_string(data: tiberius::ColumnData) -> Option<String> {
             let secs = (total_nanos / 1_000_000_000) as i64;
             let nanos = (total_nanos % 1_000_000_000) as u32;
             let epoch_secs = days_since_epoch * 86400 + secs;
-            let naive = NaiveDateTime::from_timestamp_opt(epoch_secs, nanos).unwrap_or_default();
+            let naive = DateTime::<Utc>::from_timestamp(epoch_secs, nanos)
+                .map(|d| d.naive_utc())
+                .unwrap_or_default();
             format!("{}", naive.format("%Y-%m-%d %H:%M:%S%.f"))
         }),
         ColumnData::DateTimeOffset(v) => v.map(|dto| {
@@ -351,10 +312,12 @@ fn column_data_to_string(data: tiberius::ColumnData) -> Option<String> {
             let secs = (total_nanos / 1_000_000_000) as i64;
             let nanos = (total_nanos % 1_000_000_000) as u32;
             let epoch_secs = days_since_epoch * 86400 + secs;
-            let naive = NaiveDateTime::from_timestamp_opt(epoch_secs, nanos).unwrap_or_default();
+            let naive = DateTime::<Utc>::from_timestamp(epoch_secs, nanos)
+                .map(|d| d.naive_utc())
+                .unwrap_or_default();
             let offset_min = dto.offset() as i32;
-            let offset = chrono::FixedOffset::east_opt(offset_min * 60)
-                .unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
+            let offset = FixedOffset::east_opt(offset_min * 60)
+                .unwrap_or_else(|| FixedOffset::east_opt(0).unwrap());
             let dt_with_tz =
                 DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc).with_timezone(&offset);
             format!("{}", dt_with_tz.format("%Y-%m-%d %H:%M:%S%.f%:z"))

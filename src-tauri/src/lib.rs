@@ -2,6 +2,51 @@
 mod commands;
 mod types;
 
+use bb8::Pool;
+use bb8_tiberius::ConnectionManager;
+use tauri::Manager;
+
+pub struct SqlPool(pub Pool<ConnectionManager>);
+
+#[tauri::command]
+async fn setup_pool(
+    app: tauri::AppHandle,
+    config: types::SqlConnectionConfig,
+) -> Result<(), String> {
+    let mut cfg = tiberius::Config::new();
+    cfg.host(&config.server);
+    cfg.database(&config.database);
+    if config.integrated_security {
+        cfg.authentication(tiberius::AuthMethod::windows(
+            &config.userid,
+            &config.password,
+        ));
+    } else {
+        cfg.authentication(tiberius::AuthMethod::sql_server(
+            &config.userid,
+            &config.password,
+        ));
+    }
+    if config.encrypt {
+        cfg.encryption(tiberius::EncryptionLevel::Required);
+    } else {
+        cfg.encryption(tiberius::EncryptionLevel::NotSupported);
+    }
+    if config.trust_server_certificate {
+        cfg.trust_cert();
+    }
+
+    let manager = ConnectionManager::new(cfg);
+    let pool = Pool::builder()
+        .max_size(5)
+        .build(manager)
+        .await
+        .map_err(|e| format!("Pool build failed: {e}"))?;
+
+    app.manage(SqlPool(pool));
+    Ok(())
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello World, {}! (از Rust)", name)
@@ -12,6 +57,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             greet,
+            setup_pool,
             commands::test_sql_connection,
             commands::get_sql_objects,
             commands::load_connections,
